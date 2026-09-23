@@ -1,0 +1,141 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
+
+  --color-brand-50: #e9f5ff;
+  --color-brand-100: #cfe9ff;
+  --color-brand-200: #9fd3ff;
+  --color-brand-300: #64b7fd;
+  --color-brand-400: #3aa0fa;
+  --color-brand-500: #2196f3;
+  --color-brand-600: #1e88e5;
+  --color-brand-700: #1976d2;
+  --color-brand-800: #1565c0;
+  --color-brand-900: #0d47a1;
+  --color-brand-950: #082f5e;
+
+  --color-earth-50: #e8f5e9;
+  --color-earth-100: #c8e6c9;
+  --color-earth-200: #a5d6a7;
+  --color-earth-300: #81c784;
+  --color-earth-400: #66bb6a;
+  --color-earth-500: #4caf50;
+  --color-earth-600: #43a047;
+  --color-earth-700: #388e3c;
+  --color-earth-800: #2e7d32;
+  --color-earth-900: #1b5e20;
+  --color-earth-950: #0d3b12;
+
+  --color-amber-50: #fff8ec;
+  --color-amber-100: #ffecc8;
+  --color-amber-200: #ffd68f;
+  --color-amber-300: #ffbb52;
+  --color-amber-400: #ffa726;
+  --color-amber-500: #fb8c0d;
+  --color-amber-600: #e46e06;
+  --color-amber-700: #bd5209;
+  --color-amber-800: #98410e;
+  --color-amber-900: #7c380f;
+  --color-amber-950: #421b05;
+
+  --color-pixel-sky: #7ec8e3;
+  --color-pixel-navy: #1e3a5f;
+}
+
+@layer base {
+  :root {
+    font-family: var(--font-sans);
+    color-scheme: light;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: #f8fafc;
+    color: #0f172a;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Custom light scrollbars */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #f1f5f9;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.2s ease-out forwards;
+}
+
+@keyframes pixelResolve {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.7);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-pixel-resolve {
+  animation: pixelResolve 1.1s ease-in-out infinite;
+}
+
+/* Hero background: drifting aurora blobs */
+@keyframes auroraDriftA {
+  0% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(4%, 6%) scale(1.08);
+  }
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+}
+
+@keyframes auroraDriftB {
+  0% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(-5%, -4%) scale(1.1);
+  }
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+}
+
+.animate-aurora-a {
+  animation: auroraDriftA 16s ease-in-out infinite;
+}
+
+.animate-aurora-b {
+  animation: auroraDriftB 20s ease-in-out infinite;
+}

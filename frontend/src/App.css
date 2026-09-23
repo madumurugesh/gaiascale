@@ -1,0 +1,4 @@
+/* Minimal custom utilities for GaiaScale */
+.custom-slider-divider {
+  box-shadow: 0 0 12px rgba(34, 211, 238, 0.45);
+}
