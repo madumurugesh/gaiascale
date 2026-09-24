@@ -5,6 +5,7 @@ telemetry calculation, and multi-band rendering.
 """
 
 from __future__ import annotations
+import functools
 import time
 import uuid
 from pathlib import Path
@@ -17,7 +18,7 @@ try:
     from ..config import (
         BASE_DIR, CHECKPOINTS_DIR, UPLOADS_DIR, DEVICE
     )
-    from ..models.hat import HAT
+    from ..models.hat import HAT, up_bicubic
     from .geotiff import read_geotiff, write_geotiff
     from .spectral import (
         render_rgb, render_cir, render_ndvi, render_ndwi,
@@ -31,7 +32,7 @@ except ImportError:
     from config import (
         BASE_DIR, CHECKPOINTS_DIR, UPLOADS_DIR, DEVICE
     )
-    from models.hat import HAT
+    from models.hat import HAT, up_bicubic
     from services.geotiff import read_geotiff, write_geotiff
     from services.spectral import (
         render_rgb, render_cir, render_ndvi, render_ndwi,
@@ -43,17 +44,12 @@ except ImportError:
     )
 
 
+@functools.lru_cache(maxsize=8)
 def create_hann_window(h: int, w: int) -> np.ndarray:
-    """Creates a 2D cosine Hann window for seamless overlap alpha blending."""
+    """Creates a 2D cosine Hann window for seamless overlap alpha blending. Cached per (h, w)."""
     wy = np.sin(np.linspace(0, np.pi, h)) ** 2
     wx = np.sin(np.linspace(0, np.pi, w)) ** 2
     return np.outer(wy, wx).astype(np.float32)
-
-
-def up_bicubic_np(lr: np.ndarray, scale: int = 4) -> np.ndarray:
-    t = torch.from_numpy(lr).unsqueeze(0).float()
-    out = F.interpolate(t, scale_factor=scale, mode="bicubic", align_corners=False)
-    return out.squeeze(0).clamp(0.0, 1.0).numpy()
 
 
 def downsample_np(sr: np.ndarray, scale: int = 4) -> np.ndarray:
@@ -67,6 +63,10 @@ class InferenceEngine:
     def __init__(self):
         self.device = DEVICE
         print(f"[GaiaScale Backend Engine] Initialized on device: {self.device}")
+
+        if self.device.type == "cuda":
+            # Tiles are always a fixed shape, so let cuDNN autotune conv kernels for it.
+            torch.backends.cudnn.benchmark = True
 
         self.hat_path = CHECKPOINTS_DIR / "hat_best.pt"
         self.hat_model = self._load_hat()
@@ -94,30 +94,40 @@ class InferenceEngine:
             print(f"[GaiaScale Backend] Failed to load HAT: {e}")
             return None
 
-    def _run_patch(self, lr_patch: np.ndarray, model_name: str = "hat") -> Tuple[np.ndarray, np.ndarray]:
-        """Forward pass on single patch [4, H, W] where H, W are multiples of 8."""
+    def _forward_batch(self, batch: torch.Tensor, model_name: str = "hat") -> Tuple[torch.Tensor, torch.Tensor]:
+        """Forward pass on a batch of patches [N, 4, H, W] already on self.device. Returns tensors on self.device."""
         if model_name == "bicubic" or self.hat_model is None:
-            sr = up_bicubic_np(lr_patch, scale=4)
-            unc = np.zeros((1, sr.shape[1], sr.shape[2]), dtype=np.float32)
+            sr = up_bicubic(batch, s=4).clamp(0.0, 1.0)
+            unc = torch.zeros((sr.shape[0], 1, sr.shape[2], sr.shape[3]), dtype=sr.dtype, device=sr.device)
             return sr, unc
 
-        inp = torch.from_numpy(lr_patch).unsqueeze(0).to(self.device)
-        with torch.no_grad():
-            sr_t, unc_t = self.hat_model(inp)
-            sr = sr_t.squeeze(0).clamp(0.0, 1.0).cpu().numpy()
-            unc = torch.exp(unc_t).squeeze(0).cpu().numpy()
+        with torch.inference_mode():
+            if batch.device.type == "cuda":
+                with torch.autocast(device_type="cuda", dtype=torch.float16):
+                    sr_t, unc_t = self.hat_model(batch)
+            else:
+                sr_t, unc_t = self.hat_model(batch)
+            sr = sr_t.float().clamp(0.0, 1.0)
+            unc = torch.exp(unc_t.float())
         return sr, unc
+
+    def _run_patch(self, lr_patch: np.ndarray, model_name: str = "hat") -> Tuple[np.ndarray, np.ndarray]:
+        """Forward pass on a single patch [4, H, W] where H, W are multiples of 8."""
+        inp = torch.from_numpy(lr_patch).unsqueeze(0).to(self.device)
+        sr_t, unc_t = self._forward_batch(inp, model_name)
+        return sr_t.squeeze(0).cpu().numpy(), unc_t.squeeze(0).cpu().numpy()
 
     def process_tiled(
         self,
         lr_data: np.ndarray,
         model_name: str = "hat",
         patch_size: int = 64,
-        stride: int = 48
+        stride: int = 48,
+        batch_size: int = 8
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Processes satellite scenes using sliding overlapping windows
-        with 2D Hann-window alpha blending to eliminate boundary seams.
+        Processes satellite scenes using sliding overlapping windows, batched through the
+        model together, with 2D Hann-window alpha blending to eliminate boundary seams.
         """
         C, H, W = lr_data.shape
         scale = 4
@@ -132,13 +142,14 @@ class InferenceEngine:
                 return sr_pad[:, :H * scale, :W * scale], unc_pad[:, :H * scale, :W * scale]
             return self._run_patch(lr_data, model_name)
 
-        # Tiled processing with Hann-window blending
-        sr_accum = np.zeros((C, H * scale, W * scale), dtype=np.float32)
-        unc_accum = np.zeros((1, H * scale, W * scale), dtype=np.float32)
-        weight_accum = np.zeros((1, H * scale, W * scale), dtype=np.float32)
-
-        win_weight = create_hann_window(patch_size * scale, patch_size * scale)
-        win_weight = np.maximum(win_weight, 0.05)[np.newaxis, ...]
+        # Guarantee both axes reach at least patch_size before computing sliding-window
+        # steps below; otherwise H/W - patch_size goes negative and the slice wraps around.
+        orig_H, orig_W = H, W
+        pad_h = max(0, patch_size - H)
+        pad_w = max(0, patch_size - W)
+        if pad_h > 0 or pad_w > 0:
+            lr_data = np.pad(lr_data, ((0, 0), (0, pad_h), (0, pad_w)), mode="reflect")
+            C, H, W = lr_data.shape
 
         y_steps = list(range(0, max(1, H - patch_size + 1), stride))
         if y_steps[-1] != H - patch_size:
@@ -148,25 +159,38 @@ class InferenceEngine:
         if x_steps[-1] != W - patch_size:
             x_steps.append(W - patch_size)
 
-        for y in y_steps:
-            for x in x_steps:
-                y0, y1 = y, y + patch_size
-                x0, x1 = x, x + patch_size
-                patch = lr_data[:, y0:y1, x0:x1]
+        coords = [(y, x) for y in y_steps for x in x_steps]
 
-                sr_p, unc_p = self._run_patch(patch, model_name)
+        win_weight_np = np.maximum(create_hann_window(patch_size * scale, patch_size * scale), 0.05)
+        win_weight = torch.from_numpy(win_weight_np).unsqueeze(0).to(self.device)
 
-                sy0, sy1 = y0 * scale, y1 * scale
-                sx0, sx1 = x0 * scale, x1 * scale
+        sr_accum = torch.zeros((C, H * scale, W * scale), dtype=torch.float32, device=self.device)
+        unc_accum = torch.zeros((1, H * scale, W * scale), dtype=torch.float32, device=self.device)
+        weight_accum = torch.zeros((1, H * scale, W * scale), dtype=torch.float32, device=self.device)
 
-                sr_accum[:, sy0:sy1, sx0:sx1] += sr_p * win_weight
-                unc_accum[:, sy0:sy1, sx0:sx1] += unc_p * win_weight
+        # Batch several tiles per forward pass instead of one at a time, and keep
+        # accumulation on-device to avoid a GPU<->CPU sync on every tile.
+        for i in range(0, len(coords), batch_size):
+            chunk = coords[i:i + batch_size]
+            patches = np.stack([lr_data[:, y:y + patch_size, x:x + patch_size] for y, x in chunk], axis=0)
+            batch = torch.from_numpy(patches).to(self.device)
+            sr_b, unc_b = self._forward_batch(batch, model_name)
+
+            for j, (y, x) in enumerate(chunk):
+                sy0, sy1 = y * scale, (y + patch_size) * scale
+                sx0, sx1 = x * scale, (x + patch_size) * scale
+                sr_accum[:, sy0:sy1, sx0:sx1] += sr_b[j] * win_weight
+                unc_accum[:, sy0:sy1, sx0:sx1] += unc_b[j] * win_weight
                 weight_accum[:, sy0:sy1, sx0:sx1] += win_weight
 
-        weight_accum = np.maximum(weight_accum, 1e-6)
-        sr_final = np.clip(sr_accum / weight_accum, 0.0, 1.0)
-        unc_final = unc_accum / weight_accum
-        return sr_final, unc_final
+        weight_accum = torch.clamp(weight_accum, min=1e-6)
+        sr_final = torch.clamp(sr_accum / weight_accum, 0.0, 1.0).cpu().numpy()
+        unc_final = (unc_accum / weight_accum).cpu().numpy()
+
+        return (
+            sr_final[:, :orig_H * scale, :orig_W * scale],
+            unc_final[:, :orig_H * scale, :orig_W * scale]
+        )
 
     def run_on_input(
         self,
