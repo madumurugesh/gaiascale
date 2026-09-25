@@ -9,28 +9,26 @@ interface LogoProps {
 
 const SIZES: Record<NonNullable<LogoProps['size']>, number> = {
   sm: 26,
-  md: 36,
-  lg: 56,
+  md: 32,
+  lg: 48,
 };
 
 export const Logo: FC<LogoProps> = ({ size = 'md', showText = true, className }) => {
   const iconSize = SIZES[size];
 
   return (
-    <div className={`flex items-center gap-2.5 select-none ${className ?? ''}`}>
+    <div className={`flex items-center gap-2 select-none ${className ?? ''}`}>
       <img
         src={logoImage}
         alt="GaiaScale"
-        className="shrink-0 object-contain"
+        className="shrink-0 object-contain drop-shadow-[0_0_12px_rgba(62,224,232,0.35)]"
         style={{ width: iconSize, height: iconSize }}
       />
 
       {showText && (
-        <div className="flex items-center leading-none">
-          <span className="text-lg font-extrabold tracking-tight text-slate-900">
-            Gaia<span className="text-brand-600">Scale</span>
-          </span>
-        </div>
+        <span className="text-[17px] font-semibold tracking-tight text-fg leading-none">
+          Gaia<span className="text-gradient">Scale</span>
+        </span>
       )}
     </div>
   );

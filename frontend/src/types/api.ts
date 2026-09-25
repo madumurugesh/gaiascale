@@ -48,22 +48,6 @@ export interface InferenceResponse {
   data: InferenceData;
 }
 
-export interface BenchmarkRow {
-  model: string;
-  role: string;
-  psnr: number;
-  ssim: number;
-  sam_deg: number;
-  d_ndvi: number;
-  cons_rmse: number;
-  spearman: number;
-}
-
-export interface BenchmarkResponse {
-  status: string;
-  benchmark: BenchmarkRow[];
-}
-
 export interface HealthResponse {
   status: string;
   models: string[];
