@@ -4,7 +4,7 @@ import { ArrowClockwise, FileArrowUp, FolderOpen, ShieldCheck, WarningCircle, X 
 import { Btn, Kbd } from '../ui/primitives';
 import type { StudioState } from '../state/useStudio';
 
-const STAGES = ['Reading bands', 'Tiling the scene', 'Running Gaia-HAT', 'Blending tiles', 'Re-observation check'];
+const STAGES = ['Reading bands', 'Tiling the scene', 'Running Gaia-HAT', 'Blending tiles', 'Finalizing output'];
 
 /** Processing overlay: indeterminate bar, current stage and real elapsed time. */
 export const Processing: FC<{ startedAt: number | null; fileName?: string }> = ({ startedAt, fileName }) => {

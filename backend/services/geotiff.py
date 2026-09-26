@@ -53,8 +53,8 @@ def read_geotiff(file_path: Path) -> Tuple[np.ndarray, Dict[str, Any]]:
         else:
             return np.repeat(arr[:1], 4, axis=0)
 
-    # Helper to resize excessively large images to max dimension 1024
-    def _limit_max_dim(arr: np.ndarray, max_dim: int = 1024) -> np.ndarray:
+    # Keep CPU inference and the rendered response bounded for user photos.
+    def _limit_max_dim(arr: np.ndarray, max_dim: int = 128) -> np.ndarray:
         _, h, w = arr.shape
         if max(h, w) <= max_dim:
             return arr
